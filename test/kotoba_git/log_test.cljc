@@ -53,6 +53,31 @@
     (is (= [] (log/log db nil)))
     (is (= #{} (log/missing-since db nil #{})))))
 
+(deftest missing-since-covers-both-branches-of-a-merge-without-duplication
+  (let [db0 (repo/empty-repo)
+        [db1 blob1] (obj/write-blob db0 (utf8-bytes "base"))
+        [db2 tree1] (obj/write-tree db1 [{:name "f.txt" :cid blob1 :kind :blob}])
+        [db3 c1] (obj/write-commit db2 {:tree tree1 :parents [] :author "a" :message "c1" :ts 1})
+        [db4 blob-a] (obj/write-blob db3 (utf8-bytes "branch-a"))
+        [db5 tree-a] (obj/write-tree db4 [{:name "a.txt" :cid blob-a :kind :blob}])
+        [db6 branch-a] (obj/write-commit db5 {:tree tree-a :parents [c1] :author "a" :message "a" :ts 2})
+        [db7 blob-b] (obj/write-blob db6 (utf8-bytes "branch-b"))
+        [db8 tree-b] (obj/write-tree db7 [{:name "b.txt" :cid blob-b :kind :blob}])
+        [db9 branch-b] (obj/write-commit db8 {:tree tree-b :parents [c1] :author "a" :message "b" :ts 2})
+        [db10 tree-merge] (obj/write-tree db9 [{:name "a.txt" :cid blob-a :kind :blob}
+                                                {:name "b.txt" :cid blob-b :kind :blob}])
+        [db merge] (obj/write-commit db10 {:tree tree-merge :parents [branch-a branch-b]
+                                            :author "a" :message "merge" :ts 3})]
+    (testing "peer has everything up to c1 -- missing set covers both branches' distinct objects plus the merge itself"
+      (let [have (conj (log/ancestors db c1) tree1 blob1)
+            missing (log/missing-since db merge have)]
+        (is (= #{branch-a tree-a blob-a branch-b tree-b blob-b merge tree-merge}
+               missing))
+        (testing "the shared base (c1/tree1/blob1) is correctly excluded, not double-counted"
+          (is (not (contains? missing c1)))
+          (is (not (contains? missing tree1)))
+          (is (not (contains? missing blob1))))))))
+
 (deftest log-of-a-single-root-commit
   (let [db0 (repo/empty-repo)
         [db1 tree0] (obj/write-tree db0 [])
