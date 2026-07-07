@@ -1,19 +1,12 @@
 (ns kotoba-git.refs
   "Mutable ref/branch pointers (e.g. \"refs/heads/main\" -> commit CID) as
    quads in an arrangement db — the mutable-pointer-over-immutable-content-
-   addressed-DAG pattern, same shape Datomic uses for its own indexes."
+   addressed-DAG pattern, same shape Datomic uses for its own indexes.
+   Shares its db with kotoba-git.object (see kotoba-git.repo) — a repo is
+   one arrangement db holding both objects and refs."
   (:require [arrangement.core :as arr]
             [arrangement.query :as q]
             [ipld.core :as ipld]))
-
-;; Refs are public repo metadata — there is nothing to keep secret about
-;; "which ref points at which commit" — so these are identity pass-throughs
-;; satisfying arrangement.core/commit!'s mandatory blind/encrypt contract
-;; (ADR-2607051000) without adding privacy semantics this domain doesn't need.
-(defn- identity-blind [v] (str v))
-(defn- identity-encrypt [bytes] bytes)
-
-(defn empty-refs [] (arr/empty-db))
 
 (defn- ref-pred [ref-name] (str "ref:" ref-name))
 
@@ -41,9 +34,3 @@
                 (when (clojure.string/starts-with? p "ref:")
                   [(subs p 4) (ipld/link-cid (first os))])))
         (arr/entity-attrs db repo-id)))
-
-(defn persist!
-  "Commit the current refs db to content-addressed storage, returning the
-   new snapshot CID (arrangement.core/commit!, ADR-2607051000)."
-  [put! db prev-cid]
-  (arr/commit! put! db prev-cid arr/current-schema-version identity-blind identity-encrypt))

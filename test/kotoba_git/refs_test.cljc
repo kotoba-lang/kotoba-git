@@ -1,6 +1,7 @@
 (ns kotoba-git.refs-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is]]
             [multiformats.core :as mf]
+            [kotoba-git.repo :as repo]
             [kotoba-git.refs :as refs]))
 
 ;; set-ref stores :o as a real ipld/link, which requires a genuine base32
@@ -11,28 +12,21 @@
 (def cid-3 (mf/cidv1-raw (.getBytes "commit-3" "UTF-8")))
 
 (deftest set-and-get-ref
-  (let [db (-> (refs/empty-refs)
+  (let [db (-> (repo/empty-repo)
                (refs/set-ref "repo1" "refs/heads/main" cid-1))]
     (is (= cid-1 (refs/get-ref db "repo1" "refs/heads/main")))
     (is (nil? (refs/get-ref db "repo1" "refs/heads/other")))))
 
 (deftest moving-a-ref-replaces-the-old-target
-  (let [db (-> (refs/empty-refs)
+  (let [db (-> (repo/empty-repo)
                (refs/set-ref "repo1" "refs/heads/main" cid-1)
                (refs/set-ref "repo1" "refs/heads/main" cid-2))]
     (is (= cid-2 (refs/get-ref db "repo1" "refs/heads/main")))))
 
 (deftest list-refs-scoped-per-repo
-  (let [db (-> (refs/empty-refs)
+  (let [db (-> (repo/empty-repo)
                (refs/set-ref "repo1" "refs/heads/main" cid-1)
                (refs/set-ref "repo1" "refs/heads/dev" cid-2)
                (refs/set-ref "repo2" "refs/heads/main" cid-3))]
     (is (= {"refs/heads/main" cid-1 "refs/heads/dev" cid-2} (refs/list-refs db "repo1")))
     (is (= {"refs/heads/main" cid-3} (refs/list-refs db "repo2")))))
-
-(deftest persist-returns-a-snapshot-cid
-  (let [store (atom {})
-        put! (fn [cid bytes] (swap! store assoc cid bytes))
-        db (-> (refs/empty-refs) (refs/set-ref "repo1" "refs/heads/main" cid-1))
-        snapshot-cid (refs/persist! put! db nil)]
-    (is (string? snapshot-cid))))

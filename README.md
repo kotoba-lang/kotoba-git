@@ -1,82 +1,96 @@
 # kotoba-git
 
 A content-addressed git object model (blob/tree/commit) and mutable ref
-store, built entirely on the `kotoba-lang` content-addressing and Datomic-
-style database stack (`io-multiformats` + `org-ietf-cbor` + `io-ipld` +
-`prolly-tree` + `arrangement`) instead of git's own SHA-1/packfile format.
+store, represented as **native `arrangement` (Datomic-shaped) datoms** —
+not a separate content-addressed block store bolted onto the side of the
+`kotobase-peer` stack. A blob/tree/commit's *subject* IS its own content
+hash; `io-multiformats`/`org-ietf-cbor`/`io-ipld` contribute only their
+pure canonical-encoding/hashing functions to derive that identity —
+nothing is persisted through them. Git is a schema *within* the Datomic-
+shaped foundation, not a store beside it.
 
 This is the "git-equivalent" half of ADR-2607072200 (`kotoba-git-kotoba-rad-
-on-kotobase-peer`, superproject `90-docs/adr/`). `kotoba-rad` is the sibling
-"Radicle-equivalent" half (sovereign identity, delegates, signed refs).
+on-kotobase-peer`, superproject `90-docs/adr/`, see its addendum for this
+redesign). `kotoba-rad` is the sibling "Radicle-equivalent" half (sovereign
+identity, delegates, signed refs).
 
 ## What this is
 
-- **`kotoba-git.object`** — `write-blob!`/`read-blob` (raw, 0x55 codec),
-  `write-tree!`/`read-tree` and `write-commit!`/`read-commit` (DAG-CBOR,
-  0x71 codec, real CBOR tag-42 links via `io-ipld`). Commits carry a
-  `parents` vector (0, 1, or N parents), so merge commits are representable
-  — this is a real commit *DAG*, not a linear chain.
+- **`kotoba-git.repo`** — `empty-repo` (a fresh `arrangement` db) and
+  `persist!` (snapshot the *whole* repo — objects and refs together — to
+  durable storage via `arrangement.core/commit!`). A repo is one db;
+  object subjects are content hashes, ref subjects are repo ids —
+  disjoint namespaces, so both coexist without collision.
+- **`kotoba-git.object`** — `write-blob`/`read-blob` (raw, 0x55 codec),
+  `write-tree`/`read-tree` and `write-commit`/`read-commit`. Every write
+  function is a pure `(fn [db ...] -> [db' cid])`, threaded the same way
+  `kotoba-git.refs` already was. Commits carry a `parents` vector (0, 1,
+  or N), so merge commits are representable — a real commit *DAG*, not a
+  linear chain. `commit/tree` is asserted as a genuine `ipld/link`, so
+  `arrangement.core/refs-to` answers "which commits reference this tree"
+  for free — a reverse graph query with zero extra code, the concrete
+  payoff of living inside the Datomic-shaped store instead of beside it.
 - **`kotoba-git.log`** — `ancestors` (full DAG reachability), `log`
   (first-parent history, newest-first), and `missing-since` (every commit/
   tree/blob CID reachable from a head that isn't already in a `have` set —
-  the object-negotiation primitive a push/pull/pack exchange needs).
-- **`kotoba-git.refs`** — `refs/heads/main`-style mutable pointers stored as
-  quads in an `arrangement` db (`set-ref`/`get-ref`/`list-refs`), with
-  `persist!` to snapshot the ref set to content-addressed storage via
-  `arrangement.core/commit!`.
-
-All three namespaces are storage-agnostic: every function takes an injected
-`put!`/`get-fn` pair (`(fn [cid bytes] ...)` / `(fn [cid] -> bytes)`), so the
-same code runs against an in-memory atom (see the tests), a `kotobase`
-`IStore`-backed persistence layer, or a future p2p-synced block store,
-without any change to `kotoba-git` itself.
+  the object-negotiation primitive a push/pull/pack exchange needs). Reads
+  straight out of the same `db` `kotoba-git.object` writes into.
+- **`kotoba-git.refs`** — `refs/heads/main`-style mutable pointers as
+  quads in the same `db` (`set-ref`/`get-ref`/`list-refs`) — the mutable-
+  pointer-over-immutable-DAG pattern Datomic itself uses for its own
+  indexes.
 
 ## What this deliberately is NOT (yet)
 
-- **No git-CLI wire compatibility.** There is no smart-HTTP bridge, no byte-
-  exact SHA-1 object hashing, and no binary packfile format matching real
-  `git`. A previous Rust implementation (`kotoba-git` in `kotoba-lang/kotoba`)
-  did attempt exactly that and was deleted in full on 2026-07-01 — this repo
-  does not resurrect that scope. If git-CLI interop is ever needed, it's a
-  distinct translation layer on top of these primitives, not a rewrite of
-  them.
-- **No transport/replication wiring.** `missing-since` gives you the object
+- **No git-CLI wire compatibility.** No smart-HTTP bridge, no byte-exact
+  SHA-1 object hashing, no binary packfile format matching real `git`. A
+  previous Rust implementation (`kotoba-git` in `kotoba-lang/kotoba`)
+  attempted exactly that and was deleted in full on 2026-07-01 — this repo
+  does not resurrect that scope.
+- **No transport/replication wiring.** `missing-since` gives the object
   diff a sync protocol needs, but nothing here speaks to `kotoba-lang/p2p`
   directly (that repo's own `deps.edn` currently points at a renamed-away
-  `commit-dag` coordinate and needs a patch before it's usable as-is).
-- **No push authorization.** Deciding whether a given ref update is allowed
-  is `kotoba-rad`'s job (`kotoba-rad.push-gate/authorize-push?`), not this
-  repo's — `kotoba-git` only knows how to read/write objects and refs, not
-  who's allowed to move them.
-- **No restore-from-persisted-snapshot for refs.** `refs/persist!` writes a
-  snapshot CID via `arrangement.core/commit!`; `arrangement` does not yet
-  expose a public "rehydrate a db from a snapshot CID" function to pair with
-  it (that logic currently lives inside `kotobase-peer`'s own `fold!`/
-  `cold-datoms`, not as a standalone reusable API). Until it does, keep the
-  live `db` value around yourself between restarts.
+  `commit-dag` coordinate and needs a patch first).
+- **No push authorization.** Deciding whether a ref update is allowed is
+  `kotoba-rad`'s job (`kotoba-rad.push-gate/authorize-push?`) — verified
+  end-to-end in an integration script (see the ADR's Verification
+  addendum), but `kotoba-git.refs/set-ref` itself enforces nothing; the
+  caller must invoke the gate first.
+- **No recursive/fixpoint Datalog for history walks.** `arrangement.datalog`
+  is a conjunctive-join query layer, not (yet) a transitive-closure one
+  (ADR-2607022600 flags "Datalog fixpoint" as a follow-up) — `ancestors`/
+  `log`/`missing-since` still walk the DAG by hand rather than expressing
+  reachability as one Datalog query.
+- **No restore-from-persisted-snapshot.** `repo/persist!` writes a snapshot
+  CID via `arrangement.core/commit!`; `arrangement` does not yet expose a
+  public "rehydrate a db from a snapshot CID" counterpart (that logic
+  lives inside `kotobase-peer`'s own `fold!`/`cold-datoms`, not as a
+  standalone reusable API). Until it does, keep the live `db` value around
+  yourself between restarts.
 
 ## Usage
 
 ```clojure
-(require '[kotoba-git.object :as obj]
+(require '[kotoba-git.repo :as repo]
+         '[kotoba-git.object :as obj]
          '[kotoba-git.log :as log]
          '[kotoba-git.refs :as refs])
 
-(def store (atom {}))
-(def put! (fn [cid bytes] (swap! store assoc cid bytes)))
-(def get-fn (fn [cid] (get @store cid)))
+(def db0 (repo/empty-repo))
+(let [[db1 blob] (obj/write-blob db0 (.getBytes "hello\n" "UTF-8"))
+      [db2 tree] (obj/write-tree db1 [{:name "hello.txt" :cid blob :kind :blob}])
+      [db3 commit] (obj/write-commit db2 {:tree tree :parents []
+                                           :author "did:key:z..." :message "initial"
+                                           :ts (System/currentTimeMillis)})
+      db (refs/set-ref db3 "my-repo" "refs/heads/main" commit)]
+  (refs/get-ref db "my-repo" "refs/heads/main")          ;=> commit
+  (log/log db commit)                                    ;=> [{:cid commit :tree tree ...}]
+  (log/missing-since db commit #{})                       ;=> #{commit tree blob}
 
-(def blob (obj/write-blob! put! (.getBytes "hello\n" "UTF-8")))
-(def tree (obj/write-tree! put! [{:name "hello.txt" :cid blob :kind :blob}]))
-(def commit (obj/write-commit! put! {:tree tree :parents []
-                                      :author "did:key:z..." :message "initial"
-                                      :ts (System/currentTimeMillis)}))
-
-(def refs-db (-> (refs/empty-refs) (refs/set-ref "my-repo" "refs/heads/main" commit)))
-(refs/get-ref refs-db "my-repo" "refs/heads/main") ;=> commit
-
-(log/log get-fn commit)             ;=> [{:cid commit :tree tree :parents [] ...}]
-(log/missing-since get-fn commit #{}) ;=> #{commit tree blob}
+  ;; persist the whole repo (objects + refs together)
+  (let [store (atom {})
+        put! (fn [cid bytes] (swap! store assoc cid bytes))]
+    (repo/persist! put! db nil)))
 ```
 
 ## Testing
