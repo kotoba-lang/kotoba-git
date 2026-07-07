@@ -55,10 +55,13 @@ identity, delegates, signed refs).
   previous Rust implementation (`kotoba-git` in `kotoba-lang/kotoba`)
   attempted exactly that and was deleted in full on 2026-07-01 — this repo
   does not resurrect that scope.
-- **No transport/replication wiring.** `missing-since` gives the object
-  diff a sync protocol needs, but nothing here speaks to `kotoba-lang/p2p`
-  directly (that repo's own `deps.edn` currently points at a renamed-away
-  `commit-dag` coordinate and needs a patch first).
+- **No transport/replication wiring in this repo.** `missing-since` gives
+  the object diff a sync protocol needs, and `kotoba-lang/p2p` (gossip
+  fanout + bitswap-style delta-sync + `chain/verify-chain`, now with
+  pluggable signed head-announce hooks — see `kotoba-rad.announce`) is
+  the actual sync layer, but `kotoba-git` itself has no dependency on
+  `p2p` and no code wiring the two together; that composition lives in
+  whatever application uses both.
 - **No push authorization.** Deciding whether a ref update is allowed *by
   identity* is `kotoba-rad`'s job (`kotoba-rad.push-gate/authorize-push?`)
   — verified end-to-end in an integration script (see the ADR's
