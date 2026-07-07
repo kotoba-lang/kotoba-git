@@ -38,4 +38,20 @@
             missing (log/missing-since db c2 have)]
         (is (= #{c2 tree2 blob2} missing))))
     (testing "peer has nothing"
-      (is (= #{c1 tree1 blob1 c2 tree2 blob2} (log/missing-since db c2 #{}))))))
+      (is (= #{c1 tree1 blob1 c2 tree2 blob2} (log/missing-since db c2 #{}))))
+    (testing "peer already has EVERYTHING reachable -- nothing left to send"
+      (let [have (log/missing-since db c2 #{})]
+        (is (= #{} (log/missing-since db c2 have)))))))
+
+(deftest nil-head-cid-is-an-empty-history
+  (let [db (repo/empty-repo)]
+    (is (= #{} (log/ancestors db nil)))
+    (is (= [] (log/log db nil)))
+    (is (= #{} (log/missing-since db nil #{})))))
+
+(deftest log-of-a-single-root-commit
+  (let [db0 (repo/empty-repo)
+        [db1 tree0] (obj/write-tree db0 [])
+        [db c1] (obj/write-commit db1 {:tree tree0 :parents [] :author "a" :message "root" :ts 1})]
+    (is (= [c1] (mapv :cid (log/log db c1))))
+    (is (= #{c1} (log/ancestors db c1)))))

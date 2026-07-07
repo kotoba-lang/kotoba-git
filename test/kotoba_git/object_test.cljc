@@ -64,3 +64,38 @@
           [db commit-cid] (obj/write-commit db1 {:tree tree-cid :parents [] :author "a"
                                                     :message "m" :ts 1})]
       (is (= {"commit/tree" #{commit-cid}} (arr/refs-to db (ipld/link tree-cid)))))))
+
+(deftest reading-an-absent-object-returns-nil
+  (let [db (repo/empty-repo)
+        bogus-cid (first (obj/write-blob db (.getBytes "never-written-under-this-cid" "UTF-8")))]
+    (is (nil? (obj/read-blob db "bafkreidoesnotexist")))
+    (is (nil? (obj/read-tree db "bafyreidoesnotexist")))
+    (is (nil? (obj/read-commit db "bafyreidoesnotexist")))
+    (testing "and a real CID never written to THIS db is equally absent"
+      (is (nil? (obj/read-blob (repo/empty-repo) bogus-cid))))))
+
+(deftest empty-tree-has-a-stable-cid-and-no-entries
+  (let [db0 (repo/empty-repo)
+        [db1 cid1] (obj/write-tree db0 [])
+        [db cid2] (obj/write-tree db1 [])]
+    (is (= cid1 cid2) "content-addressing is deterministic even for the empty tree")
+    (is (= {:kind :tree :entries []} (obj/read-tree db cid1)))))
+
+(deftest three-level-nested-tree-roundtrip
+  (let [db0 (repo/empty-repo)
+        [db1 blob-cid] (obj/write-blob db0 (.getBytes "deep" "UTF-8"))
+        [db2 leaf-cid] (obj/write-tree db1 [{:name "leaf.txt" :cid blob-cid :kind :blob}])
+        [db3 mid-cid] (obj/write-tree db2 [{:name "mid" :cid leaf-cid :kind :tree}])
+        [db top-cid] (obj/write-tree db3 [{:name "top" :cid mid-cid :kind :tree}])]
+    (is (= [{:name "top" :cid mid-cid :kind :tree}] (:entries (obj/read-tree db top-cid))))
+    (is (= [{:name "mid" :cid leaf-cid :kind :tree}] (:entries (obj/read-tree db mid-cid))))
+    (is (= [{:name "leaf.txt" :cid blob-cid :kind :blob}] (:entries (obj/read-tree db leaf-cid))))))
+
+(deftest same-content-different-position-same-blob-cid
+  (testing "git-style dedup: identical bytes anywhere in the tree share one blob object"
+    (let [db0 (repo/empty-repo)
+          [db1 blob-cid] (obj/write-blob db0 (.getBytes "shared" "UTF-8"))
+          [db tree-cid] (obj/write-tree db1 [{:name "a.txt" :cid blob-cid :kind :blob}
+                                              {:name "b/c.txt" :cid blob-cid :kind :blob}])]
+      (is (= 2 (count (:entries (obj/read-tree db tree-cid)))))
+      (is (apply = (map :cid (:entries (obj/read-tree db tree-cid))))))))

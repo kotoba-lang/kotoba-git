@@ -30,3 +30,21 @@
                (refs/set-ref "repo2" "refs/heads/main" cid-3))]
     (is (= {"refs/heads/main" cid-1 "refs/heads/dev" cid-2} (refs/list-refs db "repo1")))
     (is (= {"refs/heads/main" cid-3} (refs/list-refs db "repo2")))))
+
+(deftest empty-repo-has-no-refs
+  (let [db (repo/empty-repo)]
+    (is (nil? (refs/get-ref db "repo1" "refs/heads/main")))
+    (is (= {} (refs/list-refs db "repo1")))))
+
+(deftest setting-a-ref-in-one-repo-does-not-leak-into-another
+  (let [db (-> (repo/empty-repo)
+               (refs/set-ref "repo1" "refs/heads/main" cid-1))]
+    (is (nil? (refs/get-ref db "repo2" "refs/heads/main")))
+    (is (= {} (refs/list-refs db "repo2")))))
+
+(deftest setting-the-same-ref-to-the-same-target-twice-is-idempotent
+  (let [db (-> (repo/empty-repo)
+               (refs/set-ref "repo1" "refs/heads/main" cid-1)
+               (refs/set-ref "repo1" "refs/heads/main" cid-1))]
+    (is (= cid-1 (refs/get-ref db "repo1" "refs/heads/main")))
+    (is (= {"refs/heads/main" cid-1} (refs/list-refs db "repo1")))))
