@@ -5,19 +5,28 @@
             [kotoba-git.object :as obj]
             [kotoba-git.repo :as repo]))
 
+(defn- utf8-bytes [s]
+  #?(:clj (.getBytes ^String s "UTF-8")
+     :cljs (.encode (js/TextEncoder.) s)))
+
 (deftest blob-roundtrip
   (let [db0 (repo/empty-repo)
-        bytes (.getBytes "hello, kotoba-git" "UTF-8")
+        bytes (utf8-bytes "hello, kotoba-git")
         [db cid] (obj/write-blob db0 bytes)]
     (is (string? cid))
-    (is (= (seq bytes) (seq (obj/read-blob db cid))))
+    ;; vec, not seq: comparing two typed-array-backed seqs directly is
+    ;; broken in cljs (a real finding from wiring up this repo's first
+    ;; ClojureScript CI run -- (= (seq a) (seq b)) can be false for two
+    ;; Uint8Arrays with identical elements; (= (vec a) (vec b)) is the
+    ;; portable comparison, matching io-multiformats' own test convention).
+    (is (= (vec bytes) (vec (obj/read-blob db cid))))
     (testing "content-addressing is deterministic"
       (let [[_ cid2] (obj/write-blob db0 bytes)]
         (is (= cid cid2))))))
 
 (deftest tree-roundtrip
   (let [db0 (repo/empty-repo)
-        [db1 blob-cid] (obj/write-blob db0 (.getBytes "contents" "UTF-8"))
+        [db1 blob-cid] (obj/write-blob db0 (utf8-bytes "contents"))
         [db tree-cid] (obj/write-tree db1 [{:name "b.txt" :cid blob-cid :kind :blob}
                                             {:name "a.txt" :cid blob-cid :kind :blob}])
         tree (obj/read-tree db tree-cid)]
@@ -29,7 +38,7 @@
 
 (deftest nested-tree-roundtrip
   (let [db0 (repo/empty-repo)
-        [db1 blob-cid] (obj/write-blob db0 (.getBytes "nested" "UTF-8"))
+        [db1 blob-cid] (obj/write-blob db0 (utf8-bytes "nested"))
         [db2 inner-cid] (obj/write-tree db1 [{:name "f.txt" :cid blob-cid :kind :blob}])
         [db outer-cid] (obj/write-tree db2 [{:name "dir" :cid inner-cid :kind :tree}])
         outer (obj/read-tree db outer-cid)]
@@ -37,7 +46,7 @@
 
 (deftest commit-roundtrip
   (let [db0 (repo/empty-repo)
-        [db1 blob-cid] (obj/write-blob db0 (.getBytes "v1" "UTF-8"))
+        [db1 blob-cid] (obj/write-blob db0 (utf8-bytes "v1"))
         [db2 tree-cid] (obj/write-tree db1 [{:name "f.txt" :cid blob-cid :kind :blob}])
         [db commit-cid] (obj/write-commit db2 {:tree tree-cid :parents []
                                                  :author "did:key:zAlice" :message "initial"
@@ -67,7 +76,7 @@
 
 (deftest reading-an-absent-object-returns-nil
   (let [db (repo/empty-repo)
-        bogus-cid (first (obj/write-blob db (.getBytes "never-written-under-this-cid" "UTF-8")))]
+        bogus-cid (first (obj/write-blob db (utf8-bytes "never-written-under-this-cid")))]
     (is (nil? (obj/read-blob db "bafkreidoesnotexist")))
     (is (nil? (obj/read-tree db "bafyreidoesnotexist")))
     (is (nil? (obj/read-commit db "bafyreidoesnotexist")))
@@ -83,7 +92,7 @@
 
 (deftest three-level-nested-tree-roundtrip
   (let [db0 (repo/empty-repo)
-        [db1 blob-cid] (obj/write-blob db0 (.getBytes "deep" "UTF-8"))
+        [db1 blob-cid] (obj/write-blob db0 (utf8-bytes "deep"))
         [db2 leaf-cid] (obj/write-tree db1 [{:name "leaf.txt" :cid blob-cid :kind :blob}])
         [db3 mid-cid] (obj/write-tree db2 [{:name "mid" :cid leaf-cid :kind :tree}])
         [db top-cid] (obj/write-tree db3 [{:name "top" :cid mid-cid :kind :tree}])]
@@ -94,7 +103,7 @@
 (deftest same-content-different-position-same-blob-cid
   (testing "git-style dedup: identical bytes anywhere in the tree share one blob object"
     (let [db0 (repo/empty-repo)
-          [db1 blob-cid] (obj/write-blob db0 (.getBytes "shared" "UTF-8"))
+          [db1 blob-cid] (obj/write-blob db0 (utf8-bytes "shared"))
           [db tree-cid] (obj/write-tree db1 [{:name "a.txt" :cid blob-cid :kind :blob}
                                               {:name "b/c.txt" :cid blob-cid :kind :blob}])]
       (is (= 2 (count (:entries (obj/read-tree db tree-cid)))))

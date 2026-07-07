@@ -130,4 +130,20 @@ identity, delegates, signed refs).
 ```
 clojure -M:test          # against the pinned :git/sha deps
 clojure -M:local:test    # against sibling checkouts in ../ (same-monorepo dev)
+npm install && npm run test:cljs   # real ClojureScript (shadow-cljs node-test), not just .cljc-named
 ```
+
+Unlike `kotoba-rad` (which pulls in JVM-only `ed25519.core`/`cacao.core`),
+`kotoba-git` has no non-portable dependency, so it runs real ClojureScript
+CI (`gen-shadow-cljs-edn.bb` resolves `shadow-cljs.edn`'s `:source-paths`
+from `clojure -Spath`, so cljs always tests the exact pinned versions
+`clojure -M:test` does — never a hand-duplicated, driftable list).
+Wiring this up caught two genuine portability bugs the `.cljc` extension
+alone didn't guarantee: `kotoba-git.repo`'s `identity-blind`/
+`identity-encrypt` had to become real `js/Promise`-returning functions on
+cljs (`arrangement.core`'s own cljs code path calls `.then` directly on
+`encrypt-fn`'s return value — Web Crypto's AEAD has no sync primitive),
+and comparing two typed-array-backed `seq`s directly (`(= (seq a) (seq
+b))`) is unreliable in cljs even when the underlying bytes are identical
+— `(= (vec a) (vec b))` is the portable comparison (matching
+`io-multiformats`'s own test convention).

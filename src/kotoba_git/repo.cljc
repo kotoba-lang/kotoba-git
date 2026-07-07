@@ -13,13 +13,22 @@
 ;; A repo's objects and refs are not secret at this layer — identity
 ;; pass-throughs satisfying arrangement.core/commit!'s mandatory blind/
 ;; encrypt contract (ADR-2607051000) without adding privacy semantics this
-;; domain doesn't need.
-(defn- identity-blind [v] (str v))
-(defn- identity-encrypt [bytes] bytes)
+;; domain doesn't need. Platform split is REQUIRED, not cosmetic: on cljs,
+;; arrangement.core's own index-root calls `.then` directly on encrypt-fn's
+;; return value (Web Crypto's AEAD has no sync primitive), so encrypt-fn
+;; (and blind-fn, threaded the same way) must genuinely return a
+;; js/Promise there -- a plain synchronous return throws "(...).then is
+;; not a function" (caught by this repo's own real ClojureScript CI, not
+;; assumed from the .cljc extension alone).
+(defn- identity-blind [v]
+  #?(:clj (str v) :cljs (js/Promise.resolve (str v))))
+(defn- identity-encrypt [bytes]
+  #?(:clj bytes :cljs (js/Promise.resolve bytes)))
 
 (defn persist!
   "Snapshot the whole repo db (objects + refs together) to content-
-   addressed storage via arrangement.core/commit!, returning the new
-   snapshot CID."
+   addressed storage via arrangement.core/commit!. Returns the new
+   snapshot CID directly on JVM, a js/Promise of it on cljs (arrangement.
+   core's own platform split, inherited unchanged)."
   [put! db prev-cid]
   (arr/commit! put! db prev-cid arr/current-schema-version identity-blind identity-encrypt))

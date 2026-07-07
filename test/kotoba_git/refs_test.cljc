@@ -4,12 +4,16 @@
             [kotoba-git.repo :as repo]
             [kotoba-git.refs :as refs]))
 
+(defn- utf8-bytes [s]
+  #?(:clj (.getBytes ^String s "UTF-8")
+     :cljs (.encode (js/TextEncoder.) s)))
+
 ;; set-ref stores :o as a real ipld/link, which requires a genuine base32
 ;; 'b'-prefixed CIDv1 string -- these are fake-but-valid CIDs (raw-codec
 ;; hashes of distinct byte strings), standing in for real commit CIDs.
-(def cid-1 (mf/cidv1-raw (.getBytes "commit-1" "UTF-8")))
-(def cid-2 (mf/cidv1-raw (.getBytes "commit-2" "UTF-8")))
-(def cid-3 (mf/cidv1-raw (.getBytes "commit-3" "UTF-8")))
+(def cid-1 (mf/cidv1-raw (utf8-bytes "commit-1")))
+(def cid-2 (mf/cidv1-raw (utf8-bytes "commit-2")))
+(def cid-3 (mf/cidv1-raw (utf8-bytes "commit-3")))
 
 (deftest set-and-get-ref
   (let [db (-> (repo/empty-repo)

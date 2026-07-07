@@ -4,6 +4,10 @@
             [kotoba-git.repo :as repo]
             [kotoba-git.log :as log]))
 
+(defn- utf8-bytes [s]
+  #?(:clj (.getBytes ^String s "UTF-8")
+     :cljs (.encode (js/TextEncoder.) s)))
+
 (defn- linear-history [db0]
   (let [[db1 tree0] (obj/write-tree db0 [])
         [db2 c1] (obj/write-commit db1 {:tree tree0 :parents [] :author "a" :message "c1" :ts 1})
@@ -27,10 +31,10 @@
 
 (deftest missing-since-finds-new-commit-tree-and-blob
   (let [db0 (repo/empty-repo)
-        [db1 blob1] (obj/write-blob db0 (.getBytes "v1" "UTF-8"))
+        [db1 blob1] (obj/write-blob db0 (utf8-bytes "v1"))
         [db2 tree1] (obj/write-tree db1 [{:name "f.txt" :cid blob1 :kind :blob}])
         [db3 c1] (obj/write-commit db2 {:tree tree1 :parents [] :author "a" :message "c1" :ts 1})
-        [db4 blob2] (obj/write-blob db3 (.getBytes "v2" "UTF-8"))
+        [db4 blob2] (obj/write-blob db3 (utf8-bytes "v2"))
         [db5 tree2] (obj/write-tree db4 [{:name "f.txt" :cid blob2 :kind :blob}])
         [db c2] (obj/write-commit db5 {:tree tree2 :parents [c1] :author "a" :message "c2" :ts 2})]
     (testing "peer already has everything up to c1"
