@@ -29,3 +29,35 @@
                        {:repo-id repo-id :ref ref-name
                         :current current :proposed commit-cid})))
     (refs/set-ref db repo-id ref-name commit-cid)))
+
+(defn set-ref-guarded!
+  "Compose *identity* policy (who's allowed) with *shape* policy (is it a
+   fast-forward) into the single call kotoba-git's own README used to name
+   as a gap: neither kotoba-git.refs/set-ref nor set-ref-ff-only! checks
+   who's authorized, and kotoba-rad's authorize-push?/authorize-push-
+   cacao? don't know what a fast-forward is. This namespace still has no
+   dependency on kotoba-rad (or anything else) -- `authorized?` is a
+   caller-supplied 0-arg predicate, typically a partial application of
+   whichever authorization scheme the caller already chose, e.g.:
+
+     (set-ref-guarded! db repo-id ref-name commit-cid
+                        #(kotoba-rad.push-gate/authorize-push?
+                           get-fn journal-head owner-did rid ref-name commit-cid sr))
+
+   Throws ex-info (ref untouched) on either failure, with :reason
+   distinguishing :unauthorized from :not-fast-forward so a caller can
+   report the two differently (e.g. HTTP 403 vs 409)."
+  [db repo-id ref-name commit-cid authorized?]
+  (cond
+    (not (authorized?))
+    (throw (ex-info "ref update not authorized"
+                     {:reason :unauthorized :repo-id repo-id :ref ref-name
+                      :proposed commit-cid}))
+
+    (not (fast-forward? db (refs/get-ref db repo-id ref-name) commit-cid))
+    (throw (ex-info "ref update is not a fast-forward"
+                     {:reason :not-fast-forward :repo-id repo-id :ref ref-name
+                      :current (refs/get-ref db repo-id ref-name) :proposed commit-cid}))
+
+    :else
+    (refs/set-ref db repo-id ref-name commit-cid)))

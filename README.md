@@ -46,7 +46,15 @@ identity, delegates, signed refs).
   `set-ref` that throws (leaving the ref untouched) rather than silently
   allowing a non-fast-forward move. This is *shape* policy (is this
   update a rewind/diverge?), independent of and composable with
-  `kotoba-rad`'s *identity* policy (who signed off on it).
+  `kotoba-rad`'s *identity* policy (who signed off on it) — and
+  `set-ref-guarded!` now composes the two into one call: it takes a
+  caller-supplied 0-arg `authorized?` predicate (typically a partial
+  application of `kotoba-rad.push-gate/authorize-push?` or
+  `authorize-push-cacao?`, but this namespace has no dependency on
+  `kotoba-rad` to make that work — any predicate does), checks it
+  *before* the fast-forward check, and throws `ex-info` with a `:reason`
+  of `:unauthorized` or `:not-fast-forward` so a caller can report the
+  two differently (e.g. HTTP 403 vs 409).
 
 ## What this deliberately is NOT (yet)
 
@@ -62,14 +70,16 @@ identity, delegates, signed refs).
   the actual sync layer, but `kotoba-git` itself has no dependency on
   `p2p` and no code wiring the two together; that composition lives in
   whatever application uses both.
-- **No push authorization.** Deciding whether a ref update is allowed *by
-  identity* is `kotoba-rad`'s job (`kotoba-rad.push-gate/authorize-push?`)
-  — verified end-to-end in an integration script (see the ADR's
-  Verification addendum), but `kotoba-git.refs/set-ref` itself enforces
-  nothing; the caller must invoke the gate first. (`kotoba-git.ref-policy`
-  now covers the *shape* half — fast-forward-only — but composing both
-  checks before a real ref update is still the caller's responsibility;
-  no single function does both yet.)
+- **No push authorization built into `kotoba-git.refs` itself.** Deciding
+  *who's* allowed is still `kotoba-rad`'s job (`authorize-push?`/
+  `authorize-push-cacao?`) — verified end-to-end in an integration script
+  (see the ADR's Verification addendum) — and `kotoba-git.refs/set-ref`
+  on its own still enforces nothing. `kotoba-git.ref-policy/
+  set-ref-guarded!` now composes identity + shape into one call (see
+  above), so a caller no longer has to hand-order the two checks
+  themselves — but `set-ref-guarded!` still takes `authorized?` as an
+  injected predicate; `kotoba-git` still has zero dependency on
+  `kotoba-rad`.
 - **No recursive/fixpoint Datalog for history walks.** `arrangement.datalog`
   is a conjunctive-join query layer, not (yet) a transitive-closure one
   (ADR-2607022600 flags "Datalog fixpoint" as a follow-up) — `ancestors`/
@@ -104,7 +114,15 @@ identity, delegates, signed refs).
   ;; persist the whole repo (objects + refs together)
   (let [store (atom {})
         put! (fn [cid bytes] (swap! store assoc cid bytes))]
-    (repo/persist! put! db nil)))
+    (repo/persist! put! db nil))
+
+  ;; identity + shape composed into one guarded update (kotoba-rad optional):
+  ;; (require '[kotoba-git.ref-policy :as policy])
+  ;; (policy/set-ref-guarded! db "my-repo" "refs/heads/main" commit
+  ;;                           #(kotoba-rad.push-gate/authorize-push?
+  ;;                              get-fn journal-head owner-did rid
+  ;;                              "refs/heads/main" commit sr))
+  )
 ```
 
 ## Testing

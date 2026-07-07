@@ -75,3 +75,52 @@
           (is (= "refs/heads/main" (:ref data)))
           (is (= c2 (:current data)))
           (is (= c1 (:proposed data))))))))
+
+;; ── set-ref-guarded! (identity + shape composed) ────────────────────────
+
+(deftest guarded-set-ref-allows-an-authorized-fast-forward
+  (let [{:keys [db c1 c2]} (linear-history (repo/empty-repo))
+        db1 (policy/set-ref-guarded! db "repo1" "refs/heads/main" c1 (constantly true))
+        db2 (policy/set-ref-guarded! db1 "repo1" "refs/heads/main" c2 (constantly true))]
+    (is (= c2 (refs/get-ref db2 "repo1" "refs/heads/main")))))
+
+(deftest guarded-set-ref-rejects-an-unauthorized-update-even-if-its-a-fast-forward
+  (let [{:keys [db c1 c2]} (linear-history (repo/empty-repo))
+        db1 (policy/set-ref-guarded! db "repo1" "refs/heads/main" c1 (constantly true))]
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (policy/set-ref-guarded! db1 "repo1" "refs/heads/main" c2 (constantly false))))
+    (testing "the ref itself never moved"
+      (is (= c1 (refs/get-ref db1 "repo1" "refs/heads/main"))))))
+
+(deftest guarded-set-ref-rejects-an-authorized-non-fast-forward
+  (let [{:keys [db c1 c2]} (linear-history (repo/empty-repo))
+        db1 (policy/set-ref-guarded! db "repo1" "refs/heads/main" c2 (constantly true))]
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (policy/set-ref-guarded! db1 "repo1" "refs/heads/main" c1 (constantly true))))
+    (testing "the ref itself never moved"
+      (is (= c2 (refs/get-ref db1 "repo1" "refs/heads/main"))))))
+
+(deftest guarded-set-ref-checks-authorization-BEFORE-shape-and-reports-which-failed
+  (let [{:keys [db c1 c2]} (linear-history (repo/empty-repo))
+        db1 (policy/set-ref-guarded! db "repo1" "refs/heads/main" c2 (constantly true))]
+    (testing "unauthorized AND a rewind at the same time -- reason is :unauthorized"
+      (try
+        (policy/set-ref-guarded! db1 "repo1" "refs/heads/main" c1 (constantly false))
+        (is false "expected an exception to be thrown")
+        (catch #?(:clj Exception :cljs js/Error) e
+          (is (= :unauthorized (:reason (ex-data e)))))))
+    (testing "authorized but a rewind -- reason is :not-fast-forward"
+      (try
+        (policy/set-ref-guarded! db1 "repo1" "refs/heads/main" c1 (constantly true))
+        (is false "expected an exception to be thrown")
+        (catch #?(:clj Exception :cljs js/Error) e
+          (is (= :not-fast-forward (:reason (ex-data e)))))))))
+
+(deftest guarded-set-ref-authorized-predicate-receives-no-arguments
+  (testing "authorized? is a plain 0-arg predicate -- the caller closes over
+            whatever context (rid/ref-name/commit-cid/sigref) it needs"
+    (let [calls (atom 0)
+          {:keys [db c1]} (linear-history (repo/empty-repo))]
+      (policy/set-ref-guarded! db "repo1" "refs/heads/main" c1
+                                (fn [] (swap! calls inc) true))
+      (is (= 1 @calls)))))
